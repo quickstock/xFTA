@@ -44,10 +44,47 @@ def team_abbr(franchise_id) -> str:
         return "UNK"
 
 
+Z95 = 1.959964
+
+
+def assign_tiers(rows):
+    """Group players into tiers whose intervals genuinely separate.
+
+    A ranked leaderboard implies player 4 is better than player 9. With RAPM
+    intervals this wide that claim is usually unsupported, so the constraint is
+    encoded HERE, in the data, rather than left to the front end — a styling
+    change must not be able to turn tiers back into ranks.
+
+    Greedy and order-preserving: walk down by netP; a player joins the current
+    tier while his interval still overlaps the interval of the player who opened
+    it, and opens a new tier when it does not. That keeps tiers contiguous in
+    rank order, which is what makes them readable.
+
+    `netCi` is an approximate interval, not a posterior credible interval: the
+    underlying `se_o`/`se_d` are shrinkage-aware sandwich standard errors, and
+    the net SE combines them assuming independence. Both approximations are
+    stated in the export meta rather than implied away.
+    """
+    tier, anchor_lo, anchor_hi = 1, None, None
+    for row in rows:
+        lo, hi = row["netCi"]
+        if anchor_lo is None:
+            anchor_lo, anchor_hi = lo, hi
+        elif hi < anchor_lo:          # no overlap with this tier's opener
+            tier += 1
+            anchor_lo, anchor_hi = lo, hi
+        row["tier"] = tier
+    return rows
+
+
 def player_rows(rapm: pd.DataFrame, season: str):
     d = rapm[rapm.season == season]
     out = []
     for r in d.itertuples():
+        # net = o + d, so its SE combines both sides. Independence is an
+        # approximation; the offensive and defensive coefficients for one player
+        # come from the same fit and are not strictly independent.
+        se_net = float((r.se_o ** 2 + r.se_d ** 2) ** 0.5)
         out.append({
             "id": str(int(r.player_id)), "name": r.player_name,
             "possOff": int(r.poss_off), "possDef": int(r.poss_def),
@@ -55,9 +92,12 @@ def player_rows(rapm: pd.DataFrame, season: str):
             "oP": round(r.o_p, 2), "dP": round(r.d_p, 2),
             "netP": round(r.net_p, 2),
             "seO": round(r.se_o, 2), "seD": round(r.se_d, 2),
+            "seNet": round(se_net, 2),
+            "netCi": [round(r.net_p - Z95 * se_net, 2),
+                      round(r.net_p + Z95 * se_net, 2)],
         })
     out.sort(key=lambda x: x["netP"], reverse=True)
-    return out
+    return assign_tiers(out)
 
 
 def main():
@@ -103,6 +143,27 @@ def main():
             "cv": rmeta["cv"], "cvPooled": rmeta["cvPooled"],
             "collinear": rmeta["collinear"],
             "boxPriorR2": rmeta["boxPriorR2"],
+            "intervals": {
+                "level": 0.95, "z": Z95,
+                "kind": "approximate",
+                "note": ("netCi is an approximate interval, not a posterior "
+                         "credible interval. se_o/se_d are shrinkage-aware "
+                         "sandwich standard errors from the ridge fit, and the "
+                         "net SE combines them assuming independence, which the "
+                         "two coefficients of one player are not strictly. "
+                         "Tiers are therefore conservative in spirit but should "
+                         "not be read as exact posterior statements."),
+            },
+            "tiering": {
+                "rule": ("players are grouped by netP into contiguous tiers; a "
+                         "player joins the current tier while his 95% interval "
+                         "overlaps that of the player who opened it, and opens a "
+                         "new tier when it does not"),
+                "why": ("a ranked list implies distinctions the intervals do not "
+                        "support, so the constraint is encoded in this JSON "
+                        "rather than in the UI, where a styling change could "
+                        "silently restore ranks"),
+            },
             "synergyOOS": lmeta["oos"], "lineupFloorPoss": lmeta["floorPoss"],
             "skippedGames": sum(rmeta["skips"].values()),
             "totalGames": 7230, "gamesKept": rmeta["gamesKept"],
