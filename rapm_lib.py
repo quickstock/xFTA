@@ -225,6 +225,90 @@ def event_points(pbp: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame({"d_home": d_home, "d_away": d_away})
 
 
+# ------------------------------------------------------------- design
+
+def build_design(df: pd.DataFrame):
+    """Grouped RAPM design matrix from possession_lineups-shaped rows.
+
+    Groups collapse identical (game_id, o1..o5, d1..d5, home_off) so
+    game-fold CV can slice rows; y = mean points per possession x 100,
+    w = possessions per group. Columns: ["_int", "_hca", o_{pid}...,
+    d_{pid}...]; offensive entries +1, defensive entries -1 (under which
+    a good defender's coefficient is already positive = points
+    prevented). Returns (X csr, y, w, cols, game_ids-aligned-to-rows).
+    """
+    from scipy import sparse
+
+    df = df.copy()
+    if "game_id" not in df.columns:
+        df["game_id"] = "g0"
+    key_cols = ["game_id", "o1", "o2", "o3", "o4", "o5",
+                "d1", "d2", "d3", "d4", "d5", "home_off"]
+    g = (df.groupby(key_cols, sort=False)
+           .agg(n=("pts", "size"), pts=("pts", "sum"))
+           .reset_index())
+    y = (g.pts / g.n * 100).to_numpy(dtype=float)
+    w = g.n.to_numpy(dtype=float)
+
+    o_pids = sorted(set(np.unique(g[["o1", "o2", "o3", "o4", "o5"]])))
+    d_pids = sorted(set(np.unique(g[["d1", "d2", "d3", "d4", "d5"]])))
+    cols = (["_int", "_hca"]
+            + [f"o_{p}" for p in o_pids] + [f"d_{p}" for p in d_pids])
+    col_of = {c: j for j, c in enumerate(cols)}
+
+    n = len(g)
+    rows_idx, cols_idx, vals = [], [], []
+    rows_idx.extend(range(n)); cols_idx.extend([0] * n); vals.extend([1.0] * n)
+    rows_idx.extend(range(n)); cols_idx.extend([1] * n)
+    vals.extend(g.home_off.astype(float).tolist())
+    for c in ("o1", "o2", "o3", "o4", "o5"):
+        rows_idx.extend(range(n))
+        cols_idx.extend(g[c].map(lambda p: col_of[f"o_{p}"]).tolist())
+        vals.extend([1.0] * n)
+    for c in ("d1", "d2", "d3", "d4", "d5"):
+        rows_idx.extend(range(n))
+        cols_idx.extend(g[c].map(lambda p: col_of[f"d_{p}"]).tolist())
+        vals.extend([-1.0] * n)
+    X = sparse.csr_matrix(
+        (vals, (rows_idx, cols_idx)), shape=(n, len(cols)))
+    return X, y, w, cols, g.game_id.to_numpy()
+
+
+def solve_ridge(X, y, w, lam: float, penalize, prior=None) -> np.ndarray:
+    """(X'WX + lam*diag(penalize)) b = X'W(y - X prior); returns prior + b.
+    Dense normal equations (~1.1k columns per season): exact and fast
+    enough to sweep lambda."""
+    from scipy import linalg, sparse
+
+    if prior is None:
+        prior = np.zeros(X.shape[1])
+    Xw = X.multiply(w[:, None]).tocsr() if sparse.issparse(X) else X * w[:, None]
+    A = (X.T @ Xw).toarray() if sparse.issparse(X) else X.T @ Xw
+    A = A + lam * np.diag(penalize)
+    resid = y - X @ prior
+    rhs = X.T @ (w * resid)
+    b = linalg.solve(A, rhs, assume_a="pos")
+    return prior + b
+
+
+def ridge_se(X, y, w, lam: float, penalize, b) -> np.ndarray:
+    """Sandwich standard errors for the ridge estimate: sigma^2 *
+    diag(A^-1 X'WX A^-1), sigma^2 = weighted RSS / (sum(w) - trace(H)).
+    Approximate (shrinkage-aware), labeled as such in the UI."""
+    from scipy import linalg, sparse
+
+    Xw = X.multiply(w[:, None]).tocsr() if sparse.issparse(X) else X * w[:, None]
+    G = (X.T @ Xw).toarray() if sparse.issparse(X) else X.T @ Xw
+    A = G + lam * np.diag(penalize)
+    A_inv = linalg.inv(A)
+    resid = y - X @ b
+    rss = float(np.sum(w * resid ** 2))
+    df_eff = float(np.sum(w)) - float(np.trace(A_inv @ G))
+    sigma2 = rss / max(df_eff, 1.0)
+    cov = A_inv @ G @ A_inv
+    return np.sqrt(np.maximum(sigma2 * np.diag(cov), 0.0))
+
+
 # ------------------------------------------------------- sub timelines
 
 # Rows that must never create on-court presence: dead-ball administration,
