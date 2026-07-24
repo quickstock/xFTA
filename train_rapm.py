@@ -40,6 +40,16 @@ BOX_FEATURES = ["PTS", "FGA", "FG3A", "FTA", "OREB", "DREB", "AST",
                 "TOV", "STL", "BLK", "PF"]
 BOX_DIR = os.path.join(config.CACHE_DIR, "box100")
 
+# Sample-size shrinkage applied to the box prior itself. The prior is a linear
+# fit on per-100 box rates, so a player with a handful of possessions has wild
+# per-100 rates and the fit extrapolates absurdly — a 7-possession player was
+# once priced at +14.8 O-RAPM. That matters more than a normal outlier would,
+# because solve_ridge shrinks the *residual* toward the prior: with almost no
+# data the prior BECOMES the estimate. Each prediction is therefore pulled
+# toward the fitted league mean by that player's own possessions, on the same
+# scale as the >=1000-possession floor the prior is trained on.
+PRIOR_SHRINK_POSS = 1000.0
+
 
 def fold_of(game_ids: np.ndarray) -> np.ndarray:
     """Deterministic game -> fold assignment (hash of the id string)."""
@@ -206,10 +216,17 @@ def collinear_pairs(df, season):
     return out
 
 
-def build_prior_map(rapm_by_season, box_by_season, target_season, cols_pids):
+def build_prior_map(rapm_by_season, box_by_season, target_season, cols_pids,
+                    poss_by_pid=None):
     """LOSO: regress other seasons' plain o (resp. d) on standardized box
     per-100 stats, predict this season's players. Returns ({col: prior},
-    r2_o, r2_d)."""
+    r2_o, r2_d).
+
+    Predictions are shrunk toward the fitted league mean by each player's
+    possessions (see PRIOR_SHRINK_POSS); pass `poss_by_pid` as
+    {player_id: (poss_off, poss_def)} to enable it. Without it every player
+    would get a full-strength prior, including ones whose per-100 rates come
+    from a handful of possessions."""
     train_rows = []
     for s, tab in rapm_by_season.items():
         if s == target_season or s == "pooled":
@@ -243,10 +260,19 @@ def build_prior_map(rapm_by_season, box_by_season, target_season, cols_pids):
         Xt = np.column_stack([np.ones(len(Xt)), (Xt - mu) / sd])
         po = Xt @ beta_o
         pd_ = Xt @ beta_d
+        # Features are standardized on the training population, so each
+        # intercept alone is that fit's prediction for an average player —
+        # the right thing to shrink a thin sample toward.
+        base_o, base_d = float(beta_o[0]), float(beta_d[0])
         for pid, o_hat, d_hat in zip(box_t.PLAYER_ID, po, pd_):
-            if int(pid) in cols_pids:
-                prior[f"o_{int(pid)}"] = float(o_hat)
-                prior[f"d_{int(pid)}"] = float(d_hat)
+            p = int(pid)
+            if p not in cols_pids:
+                continue
+            n_o, n_d = (poss_by_pid or {}).get(p, (0.0, 0.0))
+            w_o = n_o / (n_o + PRIOR_SHRINK_POSS)
+            w_d = n_d / (n_d + PRIOR_SHRINK_POSS)
+            prior[f"o_{p}"] = base_o + w_o * (float(o_hat) - base_o)
+            prior[f"d_{p}"] = base_d + w_d * (float(d_hat) - base_d)
     return prior, round(r2_o, 3), round(r2_d, 3)
 
 
@@ -277,9 +303,12 @@ def main():
     meta_cv = []
     prior_r2 = {}
     for s in seasons:
-        pids = set(rapm_by_season[s].player_id)
+        tab = rapm_by_season[s]
+        pids = set(tab.player_id)
+        poss_by_pid = {int(p): (float(a), float(b)) for p, a, b in
+                       zip(tab.player_id, tab.poss_off, tab.poss_def)}
         prior_map, r2o, r2d = build_prior_map(
-            rapm_by_season, box_by_season, s, pids)
+            rapm_by_season, box_by_season, s, pids, poss_by_pid)
         prior_r2[s] = {"o": r2o, "d": r2d}
         results[s] = fit_season(pl[pl.season == s], prior_map=prior_map)
         r = results[s]

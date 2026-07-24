@@ -16,8 +16,17 @@ train_possession_v4_context.py-> predictions_poss_clean  (expected FTA per posse
 build_possession_leaderboard_clean.py -> player_season_xfta_poss_lb_clean (FTAOE board)
 build_style_adjusted.py       -> style_expected  (attack-profile baseline)
 build_player_ft.py            -> player_season_ft  (season FT%)
-xfg_model.py / shot_value.py  -> shot_value, player_game_shot_value, team_shot_value
+xfg_model.py / shot_value.py  -> shot_value, player_game_shot_value, team_shot_value,
+                                 shots_xfg (per-shot OOF xFG/xPts)
 export_site_data.py           -> site/public/*.json   (gated by scripts/validate_export.py)
+
+# Layer 1 — lineups / RAPM (independent of the FTAOE chain above)
+pull_rotations.py             network pull -> cache/rotations/{gid}.parquet
+build_stints.py               -> possession_lineups, stint_skips
+train_rapm.py                 -> rapm, rapm_meta
+build_lineups.py              -> lineup_season, lineup_games, lineup_meta
+export_rapm.py                -> site/public/rapm-NBA.json + lineups-NBA-{season}.json
+                                 (gated by scripts/validate_rapm.py)
 ```
 
 ## Base / ingested
@@ -114,6 +123,54 @@ points actual vs expected, the series behind the shot-value gap and form charts.
 `team_id, season, off_* / def_* (fga, act_fg_pts, exp_fg_pts)`. Team FG points
 over expected on both ends, retained for analysis (the live League board uses
 the foul-drawing side).
+
+## Layer 1 — lineups / RAPM
+
+### possession_lineups (1,382,146)
+One row per possession with both five-man units resolved.
+`game_id, season, possession_number, off_team, home_off, o1..o5, d1..d5, pts`.
+On-court state comes from `cache/rotations` (GameRotation), not from
+play-by-play substitutions — the V3 feed never states who *started* a period, so
+on/off can't be reconstructed from it alone. Coverage is 97.3% of possessions
+across 7,040 of 7,230 games; `pts` is reconstructed from the raw feed (made FG
+`shotValue` + made FTs) and gated against each game's official final.
+
+### stint_skips (190)
+`game_id, reason`. Games dropped whole rather than half-modeled: `coverage` (162,
+rotation rows don't resolve to 5-on-5 everywhere) and `score-regression` (28, the
+same corrupt-feed signal `build_tables` uses).
+
+### rapm (4,491) / rapm_meta
+One row per player-season plus a pooled fit.
+`player_id, player_name, season, poss_off, poss_def, o, d, net, o_p, d_p, net_p,
+se_o, se_d`. Bare fields are plain ridge; `*_p` shrink toward a
+leave-one-season-out box-score prior instead of toward zero, and are what the
+site displays. Defence is signed so positive prevents points. λ is chosen per
+season by game-holdout CV (3,200 — an interior optimum of the grid, not a
+boundary), and RAPM beats both a sum-of-parts and a home-court-only baseline
+out-of-sample in every season. `rapm_meta` holds that CV table, the prior's R²
+(~0.34 offence, ~0.10 defence — box stats predict offence far better), the
+collinearity report (no pairs above r=0.95), and skip counts.
+
+**The prior is itself shrunk by sample size** (`PRIOR_SHRINK_POSS`). It is a
+linear fit on per-100 box rates, so a player with a handful of possessions has
+wild per-100 rates and the fit extrapolates absurdly; because the ridge shrinks
+the *residual* toward the prior, a garbage prior becomes the estimate. Unshrunk,
+a 7-possession player priced at +14.8 O-RAPM and topped the board.
+
+### lineup_season (889) / lineup_games (15,760) / lineup_meta
+Five-man units at or above a 300-possession floor.
+`season, lineup_id, team, poss_off, poss_def, pts_for, pts_against, poss,
+net100, exp100, synergy100, xpts_shot, xpts_shot_parts, sq_synergy`.
+`exp100` sums members' prior-informed RAPM, so `synergy100 = net100 - exp100` is
+performance beyond the sum of the parts; `sq_synergy` asks the same question of
+shot quality using `shots_xfg`. **Synergy does not persist out-of-sample**
+(r=0.02, n=321), so the site presents it as description, never forecast.
+
+### shots_xfg (1,274,964)
+`game_id, event_id, xfg, xpts`. Per-shot out-of-fold xFG and expected points,
+persisted so lineup-level shot quality can reuse the shot-value primitive rather
+than refit it.
 
 ## Notes
 
