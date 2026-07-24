@@ -1,0 +1,136 @@
+{
+  "perSeason": [
+    {
+      "season": "2020-21",
+      "boxRmse": 16.06007,
+      "minutesTeamRmse": 15.65803,
+      "winner": "min+team",
+      "boxRidgeRmse": 15.30757,
+      "minutesTeamRidgeRmse": 15.32178,
+      "ridgeWinner": "box",
+      "boxR2": {
+        "o": 0.332,
+        "d": 0.107
+      },
+      "minutesTeamR2": {
+        "o": 0.112,
+        "d": 0.071
+      }
+    },
+    {
+      "season": "2021-22",
+      "boxRmse": 15.90837,
+      "minutesTeamRmse": 15.54878,
+      "winner": "min+team",
+      "boxRidgeRmse": 15.43084,
+      "minutesTeamRidgeRmse": 15.43226,
+      "ridgeWinner": "box",
+      "boxR2": {
+        "o": 0.348,
+        "d": 0.117
+      },
+      "minutesTeamR2": {
+        "o": 0.121,
+        "d": 0.069
+      }
+    },
+    {
+      "season": "2022-23",
+      "boxRmse": 14.64668,
+      "minutesTeamRmse": 14.42123,
+      "winner": "min+team",
+      "boxRidgeRmse": 14.29497,
+      "minutesTeamRidgeRmse": 14.31209,
+      "ridgeWinner": "box",
+      "boxR2": {
+        "o": 0.343,
+        "d": 0.108
+      },
+      "minutesTeamR2": {
+        "o": 0.122,
+        "d": 0.067
+      }
+    },
+    {
+      "season": "2023-24",
+      "boxRmse": 16.28303,
+      "minutesTeamRmse": 15.87646,
+      "winner": "min+team",
+      "boxRidgeRmse": 15.48464,
+      "minutesTeamRidgeRmse": 15.49646,
+      "ridgeWinner": "box",
+      "boxR2": {
+        "o": 0.342,
+        "d": 0.092
+      },
+      "minutesTeamR2": {
+        "o": 0.116,
+        "d": 0.069
+      }
+    },
+    {
+      "season": "2024-25",
+      "boxRmse": 16.115,
+      "minutesTeamRmse": 15.52472,
+      "winner": "min+team",
+      "boxRidgeRmse": 15.10658,
+      "minutesTeamRidgeRmse": 15.08982,
+      "ridgeWinner": "min+team",
+      "boxR2": {
+        "o": 0.336,
+        "d": 0.104
+      },
+      "minutesTeamR2": {
+        "o": 0.119,
+        "d": 0.061
+      }
+    },
+    {
+      "season": "2025-26",
+      "boxRmse": 16.3968,
+      "minutesTeamRmse": 15.69071,
+      "winner": "min+team",
+      "boxRidgeRmse": 15.16866,
+      "minutesTeamRidgeRmse": 15.17859,
+      "ridgeWinner": "box",
+      "boxR2": {
+        "o": 0.341,
+        "d": 0.101
+      },
+      "minutesTeamR2": {
+        "o": 0.129,
+        "d": 0.057
+      }
+    }
+  ],
+  "meanBoxRmse": 15.90166,
+  "meanMinutesTeamRmse": 15.45332,
+  "boxWins": 0,
+  "nSeasons": 6,
+  "meanBoxRidgeRmse": 15.13221,
+  "meanMinutesTeamRidgeRmse": 15.1385,
+  "boxRidgeWins": 5,
+  "decidedBy": "shrinkage-target RMSE, because that is how the prior is actually used; the standalone comparison is reported alongside",
+  "features": {
+    "box": [
+      "PTS",
+      "FGA",
+      "FG3A",
+      "FTA",
+      "OREB",
+      "DREB",
+      "AST",
+      "TOV",
+      "STL",
+      "BLK",
+      "PF"
+    ],
+    "minutesTeam": [
+      "MIN",
+      "MIN_PER_GAME",
+      "TEAM_NET100"
+    ]
+  },
+  "instrument": "cv_rmse with the prior as player coefficients and only intercept + home-court refit; held-out game-margin RMSE averaged over 10 folds",
+  "verdict": "keep the box-score prior"
+}
