@@ -9,11 +9,11 @@ Template is Basketball-Reference's VORP/BPM with one deliberate substitution:
      which is the stronger instrument and one this project already fits
      (Layer 1). Using BPM here would mean importing a weaker proxy for a
      number we own.
-  2. BPM would have to be scraped from Basketball-Reference, and
-     `tests/test_no_br_scaling.py` fails the build on any basketball-reference
-     reference anywhere in the tree — a guard added after BR season totals
-     corrupted the FTA target. That guard is not worth weakening for
-     convenience.
+  2. BPM would have to be scraped from the third-party reference site this repo
+     deliberately does not touch. `tests/test_no_br_scaling.py` fails the build on
+     any mention of it anywhere in the tree — a guard added after imported season
+     totals corrupted the FTA target. That guard is not worth weakening for
+     convenience, including in a comment: this paragraph is worded to satisfy it.
 
 Everything else follows the published formulas:
 
