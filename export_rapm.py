@@ -77,7 +77,34 @@ def assign_tiers(rows):
     return rows
 
 
-def player_rows(rapm: pd.DataFrame, season: str):
+def team_map(con):
+    """(season, player_id) -> team abbreviations, most possessions first.
+
+    RapmRow has always declared `teams`, and the export never emitted it, so
+    LineupsBoard's `r.teams.join(...)` threw and blanked the whole route. The type
+    asserted a field the data lacked, which is exactly the kind of lie a type can
+    tell about JSON it never validates. Derived here from the possession stream so
+    it cannot drift from the model's own notion of who played where.
+    """
+    long = pd.read_sql(
+        """SELECT season, off_team AS team, o1 AS p FROM possession_lineups
+           UNION ALL SELECT season, off_team, o2 FROM possession_lineups
+           UNION ALL SELECT season, off_team, o3 FROM possession_lineups
+           UNION ALL SELECT season, off_team, o4 FROM possession_lineups
+           UNION ALL SELECT season, off_team, o5 FROM possession_lineups""",
+        con)
+    long = long[long.team > 0]
+    counts = (long.groupby(["season", "p", "team"]).size()
+              .rename("n").reset_index()
+              .sort_values(["season", "p", "n"], ascending=[True, True, False]))
+    out = {}
+    for r in counts.itertuples():
+        out.setdefault((r.season, int(r.p)), []).append(
+            TEAM_ABBREV.get(int(r.team), str(int(r.team))))
+    return out
+
+
+def player_rows(rapm: pd.DataFrame, season: str, teams_by=None):
     d = rapm[rapm.season == season]
     out = []
     for r in d.itertuples():
@@ -87,6 +114,7 @@ def player_rows(rapm: pd.DataFrame, season: str):
         se_net = float((r.se_o ** 2 + r.se_d ** 2) ** 0.5)
         out.append({
             "id": str(int(r.player_id)), "name": r.player_name,
+            "teams": (teams_by or {}).get((season, int(r.player_id)), []),
             "possOff": int(r.poss_off), "possDef": int(r.poss_def),
             "o": round(r.o, 2), "d": round(r.d, 2), "net": round(r.net, 2),
             "oP": round(r.o_p, 2), "dP": round(r.d_p, 2),
@@ -108,6 +136,7 @@ def main():
     rmeta = json.loads(pd.read_sql("SELECT json FROM rapm_meta", con).json.iloc[0])
     lmeta = json.loads(pd.read_sql("SELECT json FROM lineup_meta", con).json.iloc[0])
     names = dict(zip(rapm.player_id.astype(int), rapm.player_name))
+    teams_by = team_map(con)
     con.close()
 
     seasons = sorted(s for s in rapm.season.unique() if s != "pooled")
@@ -168,8 +197,13 @@ def main():
             "skippedGames": sum(rmeta["skips"].values()),
             "totalGames": 7230, "gamesKept": rmeta["gamesKept"],
         },
-        "players": {s: player_rows(rapm, s) for s in seasons},
-        "pooled": player_rows(rapm, "pooled"),
+        "players": {s: player_rows(rapm, s, teams_by) for s in seasons},
+        # the pooled fit spans seasons, so a single-season team list would be
+        # wrong; union each player's teams across every season instead
+        "pooled": player_rows(rapm, "pooled", {
+            ("pooled", pid): list(dict.fromkeys(
+                t for (sn, p), ts in teams_by.items() if p == pid for t in ts))
+            for pid in {p for (_sn, p) in teams_by}}),
         "lineups": lineups,
     }
     OUT.mkdir(parents=True, exist_ok=True)
