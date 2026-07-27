@@ -115,11 +115,64 @@ def test_ridge_se_shape_and_positivity():
     assert (se[2:] > 0).all()
 
 
+def test_ridge_cov_diag_matches_se_and_is_symmetric_psd():
+    """ridge_se must remain exactly sqrt(diag(ridge_cov)) after the refactor,
+    and the full matrix must be symmetric and positive semi-definite (it is a
+    congruence transform of a Gram matrix, so a violation means a real bug,
+    not a rounding quirk)."""
+    df, _, _ = _simulate(n_poss=8000, seed=5)
+    X, y, w, cols, _ = rl.build_design(df)
+    pen = np.array([0.0 if c in ("_int", "_hca") else 1.0 for c in cols])
+    b = rl.solve_ridge(X, y, w, 300.0, pen)
+    cov = rl.ridge_cov(X, y, w, 300.0, pen, b)
+    se = rl.ridge_se(X, y, w, 300.0, pen, b)
+    assert np.allclose(np.sqrt(np.maximum(np.diag(cov), 0.0)), se)
+    assert np.allclose(cov, cov.T, atol=1e-8)
+    eigvals = np.linalg.eigvalsh(cov)
+    assert eigvals.min() > -1e-6 * eigvals.max()  # PSD up to float error
+
+
+def test_net_variance_uses_real_covariance_not_independence():
+    """The point of this fix: for a player with non-zero Cov(o_j, d_j), the
+    correct Var(o+d) = Var(o) + Var(d) + 2*Cov(o,d) must differ from the
+    independence assumption Var(o) + Var(d). If this ever passes with the two
+    numerically equal, the export has silently regressed to assuming
+    independence again."""
+    df, _, _ = _simulate(n_poss=6000, seed=11)
+    X, y, w, cols, _ = rl.build_design(df)
+    pen = np.array([0.0 if c in ("_int", "_hca") else 1.0 for c in cols])
+    b = rl.solve_ridge(X, y, w, 300.0, pen)
+    cov = rl.ridge_cov(X, y, w, 300.0, pen, b)
+
+    o_cols = [c for c in cols if c.startswith("o_")]
+    found_nonzero = False
+    for c in o_cols:
+        pid = c[2:]
+        d_col = f"d_{pid}"
+        if d_col not in cols:
+            continue
+        j, jd = cols.index(c), cols.index(d_col)
+        cov_od = cov[j, jd]
+        if abs(cov_od) < 1e-10:
+            continue
+        found_nonzero = True
+        var_correct = cov[j, j] + cov[jd, jd] + 2 * cov_od
+        var_independent = cov[j, j] + cov[jd, jd]
+        assert not np.isclose(var_correct, var_independent), (
+            f"player {pid}: correct and independence-assumed net variance "
+            f"match even though cov_od={cov_od!r} is non-zero")
+    assert found_nonzero, (
+        "no player had a measurably non-zero o/d covariance in this "
+        "simulation — the test can't confirm the fix without one")
+
+
 if __name__ == "__main__":
     for f in [test_ridge_exact_recovery_noiseless,
               test_ridge_recovers_synthetic_values,
               test_prior_shrinkage_pulls_toward_prior,
               test_design_grouping_matches_ungrouped,
-              test_ridge_se_shape_and_positivity]:
+              test_ridge_se_shape_and_positivity,
+              test_ridge_cov_diag_matches_se_and_is_symmetric_psd,
+              test_net_variance_uses_real_covariance_not_independence]:
         f()
         print(f"ok {f.__name__}")

@@ -62,8 +62,10 @@ def assign_tiers(rows):
 
     `netCi` is an approximate interval, not a posterior credible interval: the
     underlying `se_o`/`se_d` are shrinkage-aware sandwich standard errors, and
-    the net SE combines them assuming independence. Both approximations are
-    stated in the export meta rather than implied away.
+    the net SE properly combines them using their real covariance from the same
+    fit rather than assuming independence (see `player_rows`). What remains
+    approximate — the sampling variance at a plugged-in lambda, not a full
+    posterior — is stated in the export meta rather than implied away.
     """
     tier, anchor_lo, anchor_hi = 1, None, None
     for row in rows:
@@ -108,10 +110,11 @@ def player_rows(rapm: pd.DataFrame, season: str, teams_by=None):
     d = rapm[rapm.season == season]
     out = []
     for r in d.itertuples():
-        # net = o + d, so its SE combines both sides. Independence is an
-        # approximation; the offensive and defensive coefficients for one player
-        # come from the same fit and are not strictly independent.
-        se_net = float((r.se_o ** 2 + r.se_d ** 2) ** 0.5)
+        # net = o + d, so Var(net) = Var(o) + Var(d) + 2*Cov(o,d). o and d come
+        # from the same ridge fit and are not independent — cov_od is the real
+        # sandwich covariance between them (rapm_lib.ridge_cov), not assumed zero.
+        var_net = r.se_o ** 2 + r.se_d ** 2 + 2 * r.cov_od
+        se_net = float(max(var_net, 0.0) ** 0.5)
         out.append({
             "id": str(int(r.player_id)), "name": r.player_name,
             "teams": (teams_by or {}).get((season, int(r.player_id)), []),
@@ -177,9 +180,14 @@ def main():
                 "kind": "approximate",
                 "note": ("netCi is an approximate interval, not a posterior "
                          "credible interval. se_o/se_d are shrinkage-aware "
-                         "sandwich standard errors from the ridge fit, and the "
-                         "net SE combines them assuming independence, which the "
-                         "two coefficients of one player are not strictly. "
+                         "sandwich standard errors from the ridge fit; the net "
+                         "SE combines them using their real covariance from that "
+                         "same fit (Var(o+d) = Var(o) + Var(d) + 2*Cov(o,d)), not "
+                         "an independence assumption. What remains approximate: "
+                         "this is the sampling variance of the ridge estimator "
+                         "at the lambda chosen by cross-validation, not a full "
+                         "posterior that also accounts for uncertainty in lambda "
+                         "itself or in the box-score prior's own precision. "
                          "Tiers are therefore conservative in spirit but should "
                          "not be read as exact posterior statements."),
             },

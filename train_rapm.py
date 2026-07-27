@@ -138,7 +138,11 @@ def fit_season(df, prior_map=None):
                                  v_tot, parts, pen, prior=prior)
 
     b_plain = rl.solve_ridge(X, y, w, lam_star, pen)
-    se = rl.ridge_se(X, y, w, lam_star, pen, b_plain)
+    # Full covariance, not just its diagonal: a player's o_j and d_j columns
+    # are fit in the same ridge and are not independent, so the off-diagonal
+    # entry is his real offense/defense covariance (see rapm_lib.ridge_cov).
+    cov = rl.ridge_cov(X, y, w, lam_star, pen, b_plain)
+    se = np.sqrt(np.maximum(np.diag(cov), 0.0))
     b_prior = (rl.solve_ridge(X, y, w, lam_star, pen, prior=prior)
                if prior_map else b_plain)
 
@@ -166,6 +170,9 @@ def fit_season(df, prior_map=None):
                 "d_p": float(b_prior[jd]) if jd is not None else 0.0,
                 "se_o": float(se[j]),
                 "se_d": float(se[jd]) if jd is not None else 0.0,
+                # Cov(o_j, d_j) from the same ridge fit. 0.0 for a player
+                # missing one side (jd is None) — there is no pair to covary.
+                "cov_od": float(cov[j, jd]) if jd is not None else 0.0,
             })
     out = pd.DataFrame(rows)
     out["net"] = out.o + out.d
@@ -348,6 +355,10 @@ def main():
         rapm.player_id.astype(str))
     for c in ("o", "d", "net", "o_p", "d_p", "net_p", "se_o", "se_d"):
         rapm[c] = rapm[c].round(3)
+    # cov_od's natural magnitude is ~100-1000x smaller than se_o/se_d (a
+    # covariance between two per-100 rates, not a rate itself) — 3dp would
+    # round nearly every value to 0.000 and silently undo the whole fix.
+    rapm["cov_od"] = rapm["cov_od"].round(6)
     rapm.to_sql("rapm", con, if_exists="replace", index=False)
 
     collinear = []

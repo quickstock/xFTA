@@ -291,10 +291,16 @@ def solve_ridge(X, y, w, lam: float, penalize, prior=None) -> np.ndarray:
     return prior + b
 
 
-def ridge_se(X, y, w, lam: float, penalize, b) -> np.ndarray:
-    """Sandwich standard errors for the ridge estimate: sigma^2 *
-    diag(A^-1 X'WX A^-1), sigma^2 = weighted RSS / (sum(w) - trace(H)).
-    Approximate (shrinkage-aware), labeled as such in the UI."""
+def ridge_cov(X, y, w, lam: float, penalize, b) -> np.ndarray:
+    """Full sandwich covariance matrix for the ridge estimate: sigma^2 *
+    A^-1 X'WX A^-1, sigma^2 = weighted RSS / (sum(w) - trace(H)).
+    Approximate (shrinkage-aware), labeled as such in the UI.
+
+    Returns the dense p x p matrix, not just its diagonal, because a
+    player's offense and defense coefficients are fit in the same ridge and
+    are not statistically independent — the off-diagonal entry at
+    (o_j, d_j) is his true offense/defense covariance, needed to combine
+    them into a net-rating interval correctly (Var(o+d), not Var(o)+Var(d))."""
     from scipy import linalg, sparse
 
     Xw = X.multiply(w[:, None]).tocsr() if sparse.issparse(X) else X * w[:, None]
@@ -305,8 +311,13 @@ def ridge_se(X, y, w, lam: float, penalize, b) -> np.ndarray:
     rss = float(np.sum(w * resid ** 2))
     df_eff = float(np.sum(w)) - float(np.trace(A_inv @ G))
     sigma2 = rss / max(df_eff, 1.0)
-    cov = A_inv @ G @ A_inv
-    return np.sqrt(np.maximum(sigma2 * np.diag(cov), 0.0))
+    return sigma2 * (A_inv @ G @ A_inv)
+
+
+def ridge_se(X, y, w, lam: float, penalize, b) -> np.ndarray:
+    """Per-coefficient sandwich SEs: sqrt(diag(ridge_cov(...)))."""
+    cov = ridge_cov(X, y, w, lam, penalize, b)
+    return np.sqrt(np.maximum(np.diag(cov), 0.0))
 
 
 # ------------------------------------------------------- sub timelines
